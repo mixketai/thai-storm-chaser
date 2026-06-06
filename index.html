@@ -27,10 +27,18 @@
         
         <!-- Top Panel: Status -->
         <div class="glass-panel top-panel">
-            <h1>THAI STORM CHASER <span>PRO</span></h1>
-            <div id="status-indicator">
-                <div class="pulse-dot"></div>
-                <span id="status-text">Awaiting Mapbox Token...</span>
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+                <div>
+                    <h1>THAI STORM CHASER <span>PRO</span></h1>
+                    <div id="status-indicator">
+                        <div class="pulse-dot"></div>
+                        <span id="status-text">Awaiting Mapbox Token...</span>
+                    </div>
+                </div>
+                <!-- Mobile Menu Toggle -->
+                <button id="btn-mobile-menu" class="tool-btn mobile-only" title="Toggle Menu">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+                </button>
             </div>
             <div id="dbz-tooltip" class="dbz-tooltip hidden"><span class="dbz-val">--</span> dBZ</div>
         </div>

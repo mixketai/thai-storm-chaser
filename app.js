@@ -11,6 +11,8 @@ const gpsBtn = document.getElementById('btn-gps');
 const currentRadarName = document.getElementById('current-radar-name');
 
 // Sidebar Elements
+const sidebarPanel = document.querySelector('.sidebar-panel');
+const btnMobileMenu = document.getElementById('btn-mobile-menu');
 const radarSourceSelect = document.getElementById('radar-source-select');
 const opacityRadar = document.getElementById('opacity-radar');
 const opacityOverlay = document.getElementById('opacity-overlay');
@@ -88,6 +90,13 @@ saveTokenBtn.addEventListener('click', () => {
 
 // Init
 function initMap(token) {
+    // Mobile Menu Toggle
+    if (btnMobileMenu) {
+        btnMobileMenu.addEventListener('click', () => {
+            sidebarPanel.classList.toggle('show-mobile');
+        });
+    }
+
     mapboxgl.accessToken = token;
     statusText.textContent = "Connecting to Mapbox...";
 
