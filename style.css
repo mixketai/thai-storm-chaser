@@ -20,7 +20,15 @@ body, html { width: 100%; height: 100%; background-color: var(--bg-color); color
 @keyframes pulse { 0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); } 70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); } 100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); } }
 
 /* Sidebar */
-.sidebar-panel { position: absolute; top: 90px; left: 20px; width: 280px; padding: 16px; border-radius: 12px; display: flex; flex-direction: column; gap: 16px; max-height: calc(100vh - 220px); overflow-y: auto; }
+.sidebar-panel { 
+    position: absolute; top: 90px; left: 20px; width: 280px; padding: 16px; border-radius: 12px; display: flex; flex-direction: column; gap: 16px; max-height: calc(100vh - 220px); overflow-y: auto; 
+    transition: transform 0.3s ease, opacity 0.3s ease;
+}
+.sidebar-panel.sidebar-hidden {
+    transform: translateX(-120%);
+    opacity: 0;
+    pointer-events: none;
+}
 .sidebar-panel h3 { font-size: 14px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-secondary); border-bottom: 1px solid var(--glass-border); padding-bottom: 8px; }
 .sidebar-section { display: flex; flex-direction: column; gap: 8px; }
 .sidebar-section label { font-size: 12px; color: var(--text-secondary); font-weight: 600; }
@@ -112,12 +120,18 @@ input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 4px; bac
         top: 80px; 
         max-height: calc(100vh - 180px);
         z-index: 15;
-        transition: transform 0.3s ease, opacity 0.3s ease;
         transform: translateY(-20px);
         opacity: 0;
         pointer-events: none;
     }
-    .sidebar-panel.show-mobile {
+    /* Mobile reverse logic: by default it is hidden (translated Up). The toggle adds .sidebar-hidden to show it? No, let's keep the logic consistent. 
+       Actually, let's just use .sidebar-hidden for both. On mobile, we want it hidden by default. */
+    .sidebar-panel.sidebar-hidden {
+        transform: translateY(-20px);
+        opacity: 0;
+        pointer-events: none;
+    }
+    .sidebar-panel:not(.sidebar-hidden) {
         transform: translateY(0);
         opacity: 1;
         pointer-events: all;

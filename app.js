@@ -12,7 +12,7 @@ const currentRadarName = document.getElementById('current-radar-name');
 
 // Sidebar Elements
 const sidebarPanel = document.querySelector('.sidebar-panel');
-const btnMobileMenu = document.getElementById('btn-mobile-menu');
+const btnMobileMenu = document.getElementById('btn-toggle-menu');
 const radarSourceSelect = document.getElementById('radar-source-select');
 const opacityRadar = document.getElementById('opacity-radar');
 const opacityOverlay = document.getElementById('opacity-overlay');
@@ -90,10 +90,15 @@ saveTokenBtn.addEventListener('click', () => {
 
 // Init
 function initMap(token) {
-    // Mobile Menu Toggle
+    // Hide sidebar on mobile by default
+    if (window.innerWidth <= 768) {
+        sidebarPanel.classList.add('sidebar-hidden');
+    }
+
+    // Universal Menu Toggle
     if (btnMobileMenu) {
         btnMobileMenu.addEventListener('click', () => {
-            sidebarPanel.classList.toggle('show-mobile');
+            sidebarPanel.classList.toggle('sidebar-hidden');
         });
     }
 
