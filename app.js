@@ -11,8 +11,12 @@ const gpsBtn = document.getElementById('btn-gps');
 const currentRadarName = document.getElementById('current-radar-name');
 
 // Sidebar Elements
-const sidebarPanel = document.querySelector('.sidebar-panel');
+const sidebarPanel = document.getElementById('sidebar');
+const sidebarResizer = document.getElementById('sidebar-resizer');
+const btnSidebarUndo = document.getElementById('btn-sidebar-undo');
+const btnSidebarRedo = document.getElementById('btn-sidebar-redo');
 const btnMobileMenu = document.getElementById('btn-toggle-menu');
+
 const radarSourceSelect = document.getElementById('radar-source-select');
 const opacityRadar = document.getElementById('opacity-radar');
 const opacityOverlay = document.getElementById('opacity-overlay');
@@ -30,8 +34,11 @@ const btnSimulateStorm = document.getElementById('btn-simulate-storm');
 const dbzTooltip = document.getElementById('dbz-tooltip');
 
 // Warning Widget
+const btnShowWarnings = document.getElementById('btn-show-warnings');
+const warningWidget = document.getElementById('warning-widget');
+const btnCloseWarnings = document.getElementById('btn-close-warnings');
 const warningList = document.getElementById('warning-list');
-const warningCount = document.getElementById('warning-count');
+const warningBadge = document.getElementById('warning-badge');
 
 // Draw Tools & Canvas
 const drawCanvas = document.getElementById('draw-canvas');
@@ -40,6 +47,8 @@ const btnDrawFree = document.getElementById('btn-draw-free');
 const btnDrawLine = document.getElementById('btn-draw-line');
 const btnErase = document.getElementById('btn-erase');
 const btnEraseAll = document.getElementById('btn-erase-all');
+const btnDrawUndo = document.getElementById('btn-draw-undo');
+const btnDrawRedo = document.getElementById('btn-draw-redo');
 const drawColorInput = document.getElementById('draw-color');
 const brushSizeInput = document.getElementById('brush-size');
 const eraserSizeInput = document.getElementById('eraser-size');
@@ -68,21 +77,35 @@ let animationInterval = null;
 let geolocateControl = null;
 let activeMode = 'none';
 
-// Measurement State
-let measureGeoJSON = { type: 'FeatureCollection', features: [] };
-let measurePoints = [];
-let measurePopup = new mapboxgl.Popup({ closeButton: false, closeOnClick: false, className: 'distance-popup' });
+// Sidebar Resizer State
+let sidebarWidthHistory = [280];
+let sidebarHistoryIndex = 0;
+let isResizing = false;
 
-// Canvas Drawing State (Phase 4 True Eraser)
-let strokes = []; // Array of {type: 'draw'|'erase', points: [[lng,lat]], color, width}
+// Drawing Undo/Redo State
+let strokes = []; 
+let drawUndoStack = [];
 let isDrawing = false;
 let currentStroke = null;
 
-// Lightning Engine
+// Lightning & Warnings
 let lightningInterval = null;
+let activeWarnings = [];
+let warningSimInterval = null;
 
 // Storm Engine State
 let stormData = { type: 'FeatureCollection', features: [] };
+let stormTrajectoryCoords = [];
+
+// TMD Actual Stations Database
+const tmdStations = [
+    { id: 'bkk', name: 'Bangkok (BKK)', center: [100.74, 13.68], bounds: [[100.74 - 1.1, 13.68 + 1.1], [100.74 + 1.1, 13.68 + 1.1], [100.74 + 1.1, 13.68 - 1.1], [100.74 - 1.1, 13.68 - 1.1]], url: 'bkk/bkk120.png' },
+    { id: 'phs', name: 'Phitsanulok (PHS)', center: [100.26, 16.82], bounds: [[100.26 - 1.1, 16.82 + 1.1], [100.26 + 1.1, 16.82 + 1.1], [100.26 + 1.1, 16.82 - 1.1], [100.26 - 1.1, 16.82 - 1.1]], url: 'phs/phs120.png' },
+    { id: 'srt', name: 'Surat Thani (SRT)', center: [99.14, 9.13], bounds: [[99.14 - 1.1, 9.13 + 1.1], [99.14 + 1.1, 9.13 + 1.1], [99.14 + 1.1, 9.13 - 1.1], [99.14 - 1.1, 9.13 - 1.1]], url: 'srt/srt120.png' }
+];
+let tmdMarkers = [];
+let activeTmdStation = null;
+
 
 function checkToken() {
     const savedToken = localStorage.getItem('mapbox_token');
@@ -98,6 +121,7 @@ saveTokenBtn.addEventListener('click', () => {
     }
 });
 
+// Canvas Setup
 function resizeCanvas() {
     drawCanvas.width = document.getElementById('map').clientWidth;
     drawCanvas.height = document.getElementById('map').clientHeight;
@@ -107,13 +131,11 @@ function resizeCanvas() {
 function renderCanvas() {
     if (!map) return;
     ctx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
-    
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
     for (let stroke of strokes) {
         if (stroke.points.length < 2) continue;
-        
         ctx.globalCompositeOperation = stroke.type === 'erase' ? 'destination-out' : 'source-over';
         ctx.strokeStyle = stroke.color || '#fff';
         ctx.lineWidth = stroke.width || 5;
@@ -128,6 +150,43 @@ function renderCanvas() {
         ctx.stroke();
     }
 }
+
+// Sidebar Resizer Logic
+sidebarResizer.addEventListener('mousedown', (e) => {
+    isResizing = true;
+    sidebarResizer.classList.add('resizing');
+    document.body.style.cursor = 'ew-resize';
+});
+window.addEventListener('mousemove', (e) => {
+    if (!isResizing) return;
+    const newWidth = Math.max(200, Math.min(800, e.clientX - 20)); // min 200, max 800
+    sidebarPanel.style.width = newWidth + 'px';
+});
+window.addEventListener('mouseup', () => {
+    if (isResizing) {
+        isResizing = false;
+        sidebarResizer.classList.remove('resizing');
+        document.body.style.cursor = '';
+        const w = parseInt(sidebarPanel.style.width);
+        if (w !== sidebarWidthHistory[sidebarHistoryIndex]) {
+            sidebarWidthHistory = sidebarWidthHistory.slice(0, sidebarHistoryIndex + 1);
+            sidebarWidthHistory.push(w);
+            sidebarHistoryIndex++;
+        }
+    }
+});
+btnSidebarUndo.addEventListener('click', () => {
+    if (sidebarHistoryIndex > 0) {
+        sidebarHistoryIndex--;
+        sidebarPanel.style.width = sidebarWidthHistory[sidebarHistoryIndex] + 'px';
+    }
+});
+btnSidebarRedo.addEventListener('click', () => {
+    if (sidebarHistoryIndex < sidebarWidthHistory.length - 1) {
+        sidebarHistoryIndex++;
+        sidebarPanel.style.width = sidebarWidthHistory[sidebarHistoryIndex] + 'px';
+    }
+});
 
 // Init
 function initMap(token) {
@@ -144,7 +203,8 @@ function initMap(token) {
         zoom: 5,
         minZoom: 4,
         maxBounds: [[80, -10], [120, 30]],
-        pitch: 0
+        pitch: 0,
+        doubleClickZoom: false // Disable to allow storm tracker double click
     });
 
     map.on('load', () => {
@@ -158,36 +218,27 @@ function initMap(token) {
         geolocateControl = new mapboxgl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true, showUserHeading: true });
         map.addControl(geolocateControl, 'bottom-right');
 
-        // Weather Overlays
+        // Layers
         map.addSource('owm-pressure', { type: 'raster', tiles: ['https://tile.openweathermap.org/map/pressure_new/{z}/{x}/{y}.png?appid=93f3c3013d548b28cfaf9b5c23dff33a'], tileSize: 256 });
         map.addLayer({ id: 'layer-pressure', type: 'raster', source: 'owm-pressure', paint: { 'raster-opacity': 0 }, layout: { visibility: 'none' } });
 
         map.addSource('owm-clouds', { type: 'raster', tiles: ['https://tile.openweathermap.org/map/clouds_new/{z}/{x}/{y}.png?appid=93f3c3013d548b28cfaf9b5c23dff33a'], tileSize: 256 });
         map.addLayer({ id: 'layer-clouds', type: 'raster', source: 'owm-clouds', paint: { 'raster-opacity': 0 }, layout: { visibility: 'none' } });
 
-        // CAPE Proxy (Temp)
         map.addSource('owm-cape', { type: 'raster', tiles: ['https://tile.openweathermap.org/map/temp_new/{z}/{x}/{y}.png?appid=93f3c3013d548b28cfaf9b5c23dff33a'], tileSize: 256 });
         map.addLayer({ id: 'layer-cape', type: 'raster', source: 'owm-cape', paint: { 'raster-opacity': 0 }, layout: { visibility: 'none' } });
 
-        // TMD Surface Fronts (Static Image mapped to bounds)
-        // Coordinates: [TopLeft, TopRight, BottomRight, BottomLeft]
         map.addSource('tmd-surface', { type: 'image', url: 'https://corsproxy.io/?url=http://www.tmd.go.th/programs/uploads/maps/latest.jpg', coordinates: [[85, 30], [115, 30], [115, -5], [85, -5]] });
         map.addLayer({ id: 'layer-surface', type: 'raster', source: 'tmd-surface', paint: { 'raster-opacity': 0 }, layout: { visibility: 'none' } });
 
-        // Measure Layers
-        map.addSource('measure-geojson', { type: 'geojson', data: measureGeoJSON });
-        map.addLayer({ id: 'measure-lines', type: 'line', source: 'measure-geojson', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#3b82f6', 'line-width': 4, 'line-dasharray': [2, 2] } });
-        map.addLayer({ id: 'measure-points', type: 'circle', source: 'measure-geojson', paint: { 'circle-radius': 5, 'circle-color': '#ffffff', 'circle-stroke-width': 2, 'circle-stroke-color': '#3b82f6' } });
-
-        // Interactive Storm Source
         map.addSource('storm-source', { type: 'geojson', data: stormData });
-        map.addLayer({ id: 'storm-polygons', type: 'fill', source: 'storm-source', filter: ['==', '$type', 'Polygon'], paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.6 } });
-        map.addLayer({ id: 'storm-lines', type: 'line', source: 'storm-source', filter: ['==', '$type', 'LineString'], paint: { 'line-color': '#ffffff', 'line-width': 3, 'line-dasharray': [2, 2] } });
+        map.addLayer({ id: 'storm-lines', type: 'line', source: 'storm-source', filter: ['==', '$type', 'LineString'], paint: { 'line-color': '#eab308', 'line-width': 4, 'line-dasharray': [2, 2] } });
+        map.addLayer({ id: 'storm-points', type: 'circle', source: 'storm-source', filter: ['==', '$type', 'Point'], paint: { 'circle-radius': 6, 'circle-color': '#ef4444', 'circle-stroke-width': 2, 'circle-stroke-color': '#ffffff' } });
 
         fetchRainViewerData();
         setupInteractionListeners();
         setupCanvasEngine();
-        initWarningWidget();
+        initWarningSystem();
         
         map.on('render', renderCanvas);
         window.addEventListener('resize', resizeCanvas);
@@ -195,7 +246,7 @@ function initMap(token) {
     });
 }
 
-// --- Radar API Integrations ---
+// Radar APIs
 async function fetchRainViewerData() {
     statusText.textContent = "Fetching Radar Data...";
     try {
@@ -206,7 +257,6 @@ async function fetchRainViewerData() {
         statusText.textContent = "Radar System Online";
     } catch (e) {
         console.error(e);
-        statusText.textContent = "Radar API Offline";
     }
 }
 
@@ -217,29 +267,11 @@ function setupRadarLayers() {
         map.addLayer({ id: `radar-layer-${index}`, type: 'raster', source: `radar-source-${index}`, paint: { 'raster-opacity': 0, 'raster-fade-duration': 0 } }, 'waterway-label');
     });
 
-    // Add Actual TMD Radar Layer (Bangkok BKK120 proxy)
-    const tmdBounds = [
-        [100.74 - 1.1, 13.68 + 1.1], // TL
-        [100.74 + 1.1, 13.68 + 1.1], // TR
-        [100.74 + 1.1, 13.68 - 1.1], // BR
-        [100.74 - 1.1, 13.68 - 1.1]  // BL
-    ];
-    const proxyUrl = 'https://corsproxy.io/?url=http://weather.tmd.go.th/bkk/bkk120.png';
-    map.addSource('tmd-actual-source', { type: 'image', url: proxyUrl, coordinates: tmdBounds });
-    map.addLayer({ id: 'tmd-actual-layer', type: 'raster', source: 'tmd-actual-source', paint: { 'raster-opacity': 0 }, layout: {visibility: 'none'} });
-    
-    // Load image into hidden canvas for pixel inspection
-    currentRadarImg = new Image();
-    currentRadarImg.crossOrigin = "Anonymous";
-    currentRadarImg.onload = () => {
-        hiddenCanvas.width = currentRadarImg.width;
-        hiddenCanvas.height = currentRadarImg.height;
-        hiddenCtx.drawImage(currentRadarImg, 0, 0);
-    };
-    currentRadarImg.src = proxyUrl;
+    // TMD Actual Dynamic Layer
+    map.addSource('tmd-actual-source', { type: 'image', url: 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=', coordinates: tmdStations[0].bounds });
+    map.addLayer({ id: 'tmd-actual-layer', type: 'raster', source: 'tmd-actual-source', paint: { 'raster-opacity': 0 }, layout: {visibility: 'none'} }, 'waterway-label');
 
     slider.disabled = false;
-    slider.min = 0;
     slider.max = radarData.path.length - 1;
     slider.value = radarData.path.length - 1;
     currentFrameIndex = radarData.path.length - 1;
@@ -269,7 +301,7 @@ function playRadar() {
         isPlaying = false;
         playBtn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>';
     } else {
-        if(radarSourceSelect.value === 'tmd-actual') return; // Static image, no playback
+        if(radarSourceSelect.value === 'tmd-actual') return; 
         isPlaying = true;
         playBtn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>';
         animationInterval = setInterval(() => {
@@ -289,6 +321,8 @@ radarSourceSelect.addEventListener('change', (e) => {
     document.getElementById('legend-rainviewer').classList.add('hidden');
     document.getElementById('legend-tmd').classList.add('hidden');
     map.setLayoutProperty('tmd-actual-layer', 'visibility', 'none');
+    tmdMarkers.forEach(m => m.remove());
+    tmdMarkers = [];
 
     if (val === 'rainviewer') {
         currentRadarName.textContent = 'RainViewer Composite';
@@ -299,15 +333,43 @@ radarSourceSelect.addEventListener('change', (e) => {
         document.getElementById('legend-tmd').classList.remove('hidden');
         radarData.path.forEach((f, i) => map.getSource(`radar-source-${i}`).setTiles([`${radarData.host}${f.path}/512/{z}/{x}/{y}/2/1_1.png`]));
     } else if (val === 'tmd-actual') {
-        currentRadarName.textContent = 'TMD Bangkok (Actual)';
+        currentRadarName.textContent = 'TMD Official (Select Station)';
         document.getElementById('legend-tmd').classList.remove('hidden');
         map.setLayoutProperty('tmd-actual-layer', 'visibility', 'visible');
-        map.flyTo({ center: [100.74, 13.68], zoom: 7 });
+        
+        // Spawn Real TMD Markers
+        tmdStations.forEach(st => {
+            const el = document.createElement('div');
+            el.innerHTML = `<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>`;
+            el.style.cursor = 'pointer';
+            el.style.background = 'rgba(0,0,0,0.5)';
+            el.style.borderRadius = '50%';
+            
+            const marker = new mapboxgl.Marker(el).setLngLat(st.center).addTo(map);
+            el.addEventListener('click', () => {
+                activeTmdStation = st;
+                currentRadarName.textContent = `TMD: ${st.name}`;
+                const proxyUrl = `https://corsproxy.io/?url=http://weather.tmd.go.th/${st.url}`;
+                map.getSource('tmd-actual-source').updateImage({ url: proxyUrl, coordinates: st.bounds });
+                map.flyTo({ center: st.center, zoom: 7 });
+                
+                currentRadarImg = new Image();
+                currentRadarImg.crossOrigin = "Anonymous";
+                currentRadarImg.onload = () => {
+                    hiddenCanvas.width = currentRadarImg.width;
+                    hiddenCanvas.height = currentRadarImg.height;
+                    hiddenCtx.drawImage(currentRadarImg, 0, 0);
+                };
+                currentRadarImg.src = proxyUrl;
+            });
+            tmdMarkers.push(marker);
+        });
+        map.flyTo({ center: [100.5, 13.7], zoom: 5 });
     }
     updateFrame(currentFrameIndex);
 });
 
-// Weather Overlays Toggles
+// Weather Overlays
 function setupOverlay(toggleEl, layerId) {
     toggleEl.addEventListener('change', (e) => {
         map.setLayoutProperty(layerId, 'visibility', e.target.checked ? 'visible' : 'none');
@@ -328,68 +390,71 @@ opacityOverlay.addEventListener('input', (e) => {
 // UI Modes
 function setMode(mode) {
     activeMode = mode;
-    [btnInspector, btnMeasure, btnDrawFree, btnDrawLine, btnErase, btnSounding, btnSimulateStorm].forEach(b => b.classList.remove('active'));
+    [btnInspector, btnSounding, btnSimulateStorm, btnDrawFree, btnDrawLine, btnErase].forEach(b => b.classList.remove('active'));
     map.dragPan.enable();
     drawCanvas.style.pointerEvents = 'none';
+    stormTrajectoryCoords = [];
+    stormData.features = [];
+    map.getSource('storm-source').setData(stormData);
 
-    if (mode === 'dbz' || mode === 'measure' || mode === 'storm') {
-        document.getElementById(mode === 'storm' ? 'btn-simulate-storm' : 'btn-' + mode).classList.add('active');
-        map.getCanvas().style.cursor = 'crosshair';
+    if (mode === 'dbz') {
+        btnInspector.classList.add('active'); map.getCanvas().style.cursor = 'crosshair';
     } else if (mode === 'sounding') {
-        btnSounding.classList.add('active');
-        map.getCanvas().style.cursor = 'help';
+        btnSounding.classList.add('active'); map.getCanvas().style.cursor = 'help';
+    } else if (mode === 'storm') {
+        btnSimulateStorm.classList.add('active'); map.getCanvas().style.cursor = 'crosshair';
+        alert("Storm Tracker: Click to place points. Double-Click to finish and start camera tracking.");
     } else if (mode.startsWith('draw') || mode === 'erase') {
         document.getElementById('btn-' + mode.replace('_','-')).classList.add('active');
         map.dragPan.disable();
-        drawCanvas.style.pointerEvents = 'auto'; // Give canvas mouse events
+        drawCanvas.style.pointerEvents = 'auto';
         drawCanvas.style.cursor = mode === 'erase' ? 'cell' : 'crosshair';
     } else {
         map.getCanvas().style.cursor = '';
     }
-
-    if (mode !== 'measure') {
-        measurePoints = []; measureGeoJSON.features = [];
-        if (map.getSource('measure-geojson')) map.getSource('measure-geojson').setData(measureGeoJSON);
-        measurePopup.remove();
-    }
 }
 
 btnInspector.addEventListener('click', () => setMode(activeMode === 'dbz' ? 'none' : 'dbz'));
-btnMeasure.addEventListener('click', () => setMode(activeMode === 'measure' ? 'none' : 'measure'));
 btnSounding.addEventListener('click', () => setMode(activeMode === 'sounding' ? 'none' : 'sounding'));
 btnSimulateStorm.addEventListener('click', () => setMode(activeMode === 'storm' ? 'none' : 'storm'));
 
-// Canvas Drawing Engine (True Eraser)
+// Drawing Canvas Undo/Redo
 btnDrawFree.addEventListener('click', () => setMode('draw_free'));
 btnDrawLine.addEventListener('click', () => setMode('draw_line'));
 btnErase.addEventListener('click', () => setMode('erase'));
-btnEraseAll.addEventListener('click', () => { strokes = []; renderCanvas(); });
+btnEraseAll.addEventListener('click', () => { strokes = []; drawUndoStack = []; renderCanvas(); });
+
+btnDrawUndo.addEventListener('click', () => {
+    if (strokes.length > 0) {
+        drawUndoStack.push(strokes.pop());
+        renderCanvas();
+    }
+});
+btnDrawRedo.addEventListener('click', () => {
+    if (drawUndoStack.length > 0) {
+        strokes.push(drawUndoStack.pop());
+        renderCanvas();
+    }
+});
 
 brushSizeInput.addEventListener('input', e => brushSizeLabel.textContent = `Brush: ${e.target.value}px`);
 eraserSizeInput.addEventListener('input', e => eraserSizeLabel.textContent = `${e.target.value}px`);
 
 function setupCanvasEngine() {
     drawCanvas.addEventListener('mousedown', (e) => {
-        if (activeMode !== 'draw_free' && activeMode !== 'draw_line' && activeMode !== 'erase') return;
+        if (!['draw_free', 'draw_line', 'erase'].includes(activeMode)) return;
         isDrawing = true;
+        drawUndoStack = []; // clear redo on new action
         const lngLat = map.unproject([e.offsetX, e.offsetY]);
-        currentStroke = {
-            type: activeMode === 'erase' ? 'erase' : 'draw',
-            color: drawColorInput.value,
-            width: activeMode === 'erase' ? parseInt(eraserSizeInput.value) : parseInt(brushSizeInput.value),
-            points: [[lngLat.lng, lngLat.lat]]
-        };
+        currentStroke = { type: activeMode === 'erase' ? 'erase' : 'draw', color: drawColorInput.value, width: activeMode === 'erase' ? parseInt(eraserSizeInput.value) : parseInt(brushSizeInput.value), points: [[lngLat.lng, lngLat.lat]] };
         strokes.push(currentStroke);
     });
 
     drawCanvas.addEventListener('mousemove', (e) => {
         if (!isDrawing || !currentStroke) return;
         const lngLat = map.unproject([e.offsetX, e.offsetY]);
-        if (activeMode === 'draw_line') {
-            currentStroke.points[1] = [lngLat.lng, lngLat.lat];
-        } else {
-            currentStroke.points.push([lngLat.lng, lngLat.lat]);
-        }
+        if (activeMode === 'draw_line') currentStroke.points[1] = [lngLat.lng, lngLat.lat];
+        else currentStroke.points.push([lngLat.lng, lngLat.lat]);
         renderCanvas();
     });
 
@@ -397,7 +462,7 @@ function setupCanvasEngine() {
     drawCanvas.addEventListener('mouseleave', () => { isDrawing = false; currentStroke = null; });
 }
 
-// Interaction Map
+// Interaction Tracking
 function setupInteractionListeners() {
     map.on('mousemove', (e) => {
         if (activeMode === 'dbz') {
@@ -405,21 +470,17 @@ function setupInteractionListeners() {
             dbzTooltip.style.left = e.point.x + 15 + 'px';
             dbzTooltip.style.top = e.point.y + 15 + 'px';
             
-            if (radarSourceSelect.value === 'tmd-actual' && currentRadarImg && currentRadarImg.complete) {
-                // Read actual pixel logic
-                const bounds = map.getSource('tmd-actual-source').coordinates;
+            if (radarSourceSelect.value === 'tmd-actual' && activeTmdStation && currentRadarImg && currentRadarImg.complete) {
+                const bounds = activeTmdStation.bounds;
                 const pxX = ((e.lngLat.lng - bounds[0][0]) / (bounds[1][0] - bounds[0][0])) * hiddenCanvas.width;
                 const pxY = ((bounds[0][1] - e.lngLat.lat) / (bounds[0][1] - bounds[2][1])) * hiddenCanvas.height;
                 
                 if (pxX >= 0 && pxX < hiddenCanvas.width && pxY >= 0 && pxY < hiddenCanvas.height) {
                     const px = hiddenCtx.getImageData(pxX, pxY, 1, 1).data;
-                    // Mock translation from RGB to dBZ
                     let dbz = '--';
                     if(px[3] > 0) dbz = Math.floor((px[0] + px[1] + px[2]) / 3 / 2.5);
                     dbzTooltip.querySelector('.dbz-val').textContent = dbz;
-                } else {
-                    dbzTooltip.querySelector('.dbz-val').textContent = '--';
-                }
+                } else { dbzTooltip.querySelector('.dbz-val').textContent = '--'; }
             } else {
                 const dist = turf.distance([e.lngLat.lng, e.lngLat.lat], [100.99, 15.87]);
                 const mockDbz = Math.max(0, 75 - (dist * 2) + (Math.random() * 5));
@@ -431,74 +492,58 @@ function setupInteractionListeners() {
     });
 
     map.on('click', (e) => {
-        if (activeMode === 'measure') {
-            const coords = [e.lngLat.lng, e.lngLat.lat];
-            measurePoints.push(coords);
-            measureGeoJSON.features = [];
-            measurePoints.forEach(pt => measureGeoJSON.features.push(turf.point(pt)));
-            if (measurePoints.length > 1) {
-                const line = turf.lineString(measurePoints);
-                measureGeoJSON.features.push(line);
-                measurePopup.setLngLat(coords).setHTML(`Distance: ${turf.length(line, {units: 'kilometers'}).toFixed(2)} km`).addTo(map);
-            }
-            map.getSource('measure-geojson').setData(measureGeoJSON);
-        }
-
         if (activeMode === 'sounding') {
             soundingModal.classList.add('visible');
             setMode('none');
         }
-
         if (activeMode === 'storm') {
-            // Interactive Storm Cone
-            const center = [e.lngLat.lng, e.lngLat.lat];
-            const bearing = 45; // Steering wind
-            const cone = turf.sector(center, 100, bearing - 20, bearing + 20, {units: 'kilometers'});
-            cone.properties = { color: '#ef4444' };
-            stormData.features = [turf.point(center, {color: '#a855f7'}), cone];
+            stormTrajectoryCoords.push([e.lngLat.lng, e.lngLat.lat]);
+            stormData.features = stormTrajectoryCoords.map(c => turf.point(c));
+            if (stormTrajectoryCoords.length > 1) stormData.features.push(turf.lineString(stormTrajectoryCoords));
             map.getSource('storm-source').setData(stormData);
+        }
+    });
+
+    // End Storm Tracker via double click
+    map.on('dblclick', (e) => {
+        if (activeMode === 'storm' && stormTrajectoryCoords.length > 1) {
             setMode('none');
-            alert("Projected 60-minute storm trajectory based on environmental steering winds.");
+            // Animate Camera along path
+            let idx = 0;
+            const flight = setInterval(() => {
+                if(idx >= stormTrajectoryCoords.length) { clearInterval(flight); return; }
+                map.flyTo({ center: stormTrajectoryCoords[idx], zoom: 9, pitch: 45, speed: 0.5 });
+                idx++;
+            }, 3000);
         }
     });
 }
 
-// Lightning Simulator (120s fade)
+// Lightning Simulator
 toggleLightning.addEventListener('change', (e) => {
     if (e.target.checked) {
         lightningInterval = setInterval(() => {
-            // Spawn near Bangkok roughly
             const lat = 13.7 + (Math.random() - 0.5) * 3;
             const lng = 100.5 + (Math.random() - 0.5) * 3;
-            
             const el = document.createElement('div');
             el.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="yellow" stroke="orange" stroke-width="1"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>';
             el.style.transition = 'opacity 120s linear';
             el.style.opacity = '1';
-            
             const marker = new mapboxgl.Marker(el).setLngLat([lng, lat]).addTo(map);
-            
-            // Start fade out next frame
             setTimeout(() => { el.style.opacity = '0'; }, 100);
-            // Delete after 120 seconds
             setTimeout(() => { marker.remove(); }, 120000);
-            
-        }, 1500); // Strike every 1.5s
-    } else {
-        clearInterval(lightningInterval);
-    }
+        }, 1500);
+    } else { clearInterval(lightningInterval); }
 });
 
-// Warning System Logic
-function initWarningWidget() {
-    const warnings = [
-        { title: 'Flash Flood Warning', loc: [98.98, 18.78], type: 'flood', time: '12 mins ago', desc: 'Severe flooding expected in Chiang Mai.' },
-        { title: 'Severe Thunderstorm', loc: [100.5, 13.7], type: 'storm', time: '45 mins ago', desc: 'Damaging winds near Bangkok metro.' },
-        { title: 'Hail & Downburst', loc: [102.8, 16.4], type: 'storm', time: '1 hr ago', desc: 'Khon Kaen facing severe downburst.' }
-    ];
-    warningCount.textContent = warnings.length;
-    
-    warnings.forEach(w => {
+// Warning System Logic (45 max)
+btnShowWarnings.addEventListener('click', () => warningWidget.classList.remove('hidden'));
+btnCloseWarnings.addEventListener('click', () => warningWidget.classList.add('hidden'));
+
+function renderWarnings() {
+    warningList.innerHTML = '';
+    warningBadge.textContent = activeWarnings.length;
+    activeWarnings.slice().reverse().forEach(w => {
         const li = document.createElement('li');
         li.className = 'warning-item';
         li.innerHTML = `<div class="warning-title ${w.type}">${w.title}</div><div class="warning-time">${w.time}</div>`;
@@ -508,6 +553,27 @@ function initWarningWidget() {
         });
         warningList.appendChild(li);
     });
+}
+
+function initWarningSystem() {
+    // Initial Warning
+    activeWarnings.push({ title: 'TMD: Heavy Rain Watch', loc: [98.98, 18.78], type: 'flood', time: new Date().toLocaleTimeString(), desc: 'Heavy rain across northern Thailand.' });
+    renderWarnings();
+    
+    // Simulate incoming warnings
+    warningSimInterval = setInterval(() => {
+        if(activeWarnings.length >= 45) activeWarnings.shift(); // Remove oldest
+        const types = ['flood', 'storm'];
+        const type = types[Math.floor(Math.random()*types.length)];
+        activeWarnings.push({
+            title: `TMD Warning: ${type === 'storm' ? 'Severe Thunderstorm' : 'Flash Flood'}`,
+            loc: [100.5 + (Math.random()-0.5)*5, 13.7 + (Math.random()-0.5)*5],
+            type: type,
+            time: new Date().toLocaleTimeString(),
+            desc: 'Official TMD Alert generated for this location.'
+        });
+        renderWarnings();
+    }, 20000); // New warning every 20s for demonstration
 }
 
 // Sounding Modal UI
